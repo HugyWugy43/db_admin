@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DB Administrator - Управление базами данных</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- LOGIN PAGE -->
+  <div id="loginPage" class="login-page">
+    <div class="auth-box">
+      <h1>🗄️ DB Administrator</h1>
+      <p class="subtitle">Управление базами данных</p>
+      
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('login', event)">Вход</button>
+        <button class="tab-btn" onclick="switchTab('register', event)">Регистрация</button>
+      </div>
+
+      <!-- Login Form -->
+      <form id="loginForm" class="form active" onsubmit="handleLogin(event)">
+        <div class="input-group">
+          <label>Пользователь</label>
+          <input id="loginUser" type="text" placeholder="admin" required>
+        </div>
+        <div class="input-group">
+          <label>Пароль</label>
+          <input id="loginPass" type="password" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Войти</button>
+        <p id="loginMsg" class="msg"></p>
+      </form>
+
+      <!-- Register Form -->
+      <form id="registerForm" class="form" onsubmit="handleRegister(event)">
+        <div class="input-group">
+          <label>Имя пользователя</label>
+          <input id="regUser" type="text" required>
+        </div>
+        <div class="input-group">
+          <label>Email</label>
+          <input id="regEmail" type="email" required>
+        </div>
+        <div class="input-group">
+          <label>Пароль</label>
+          <input id="regPass" type="password" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Зарегистрироваться</button>
+        <p id="regMsg" class="msg"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div id="app" class="app hidden">
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+      <div class="logo">🗄️ DB Admin</div>
+      <nav>
+        <a class="nav-link active" onclick="go('dash', event)">📊 Дашборд</a>
+        <a class="nav-link" onclick="go('db', event)">🗃️ Базы данных</a>
+        <a class="nav-link" onclick="go('logs', event)">📋 Логи</a>
+        <a class="nav-link" onclick="go('profile', event)">⚙️ Профиль</a>
+      </nav>
+      <div class="user-box">
+        <div id="userName" class="user-name">Загрузка...</div>
+        <button class="btn btn-exit" onclick="logout()">Выход</button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main">
+      <!-- DASHBOARD PAGE -->
+      <section id="page-dash" class="page active">
+        <h1>📊 Дашборд</h1>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-value" id="stat-users">0</div>
+            <div class="stat-label">Пользователей (всего)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-dbs">0</div>
+            <div class="stat-label">Подключений (всего)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-active">0</div>
+            <div class="stat-label">Статус «connected»</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-remote-size">—</div>
+            <div class="stat-label">Ваши БД: суммарный размер</div>
+          </div>
+        </div>
+        <p class="help-text" id="dashHint"></p>
+        <div class="table-container dash-conn-wrap">
+          <h2 class="dash-subtitle">Мониторинг ваших подключений</h2>
+          <table class="data-table" id="dashConnectionsTable">
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Хост</th>
+                <th>База</th>
+                <th>Статус</th>
+                <th>Размер (PG)</th>
+                <th>Сессии</th>
+              </tr>
+            </thead>
+            <tbody id="dashConnectionsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- DATABASES PAGE -->
+      <section id="page-db" class="page">
+        <div class="page-header">
+          <h1>🗃️ Базы данных</h1>
+          <button class="btn btn-primary" onclick="openAddDB()">+ Новое подключение</button>
+        </div>
+
+        <!-- DB List View -->
+        <div id="dbList">
+          <p id="dbListMsg" class="msg db-list-msg" aria-live="polite"></p>
+          <div id="dbGrid" class="db-grid"></div>
+        </div>
+
+        <!-- DB Detail View -->
+        <div id="dbDetail" class="db-detail hidden">
+          <button class="btn btn-back" onclick="backDB()">← Назад к списку</button>
+          <h2 id="dbName" class="db-title"></h2>
+
+          <div class="db-explorer">
+            <!-- Schemas Panel -->
+            <div class="panel schemas-panel">
+              <h3>Схемы</h3>
+              <p class="help-text schema-hint">Здесь — схемы <em>внутри</em> этой базы. В PostgreSQL <code>template0</code> и <code>template1</code> — это отдельные <em>базы</em> (шаблоны), а не схемы; их не будет в этом списке. Обычно видна схема <code>public</code>.</p>
+              <div id="schemasList" class="list"></div>
+            </div>
+
+            <!-- Tables Panel -->
+            <div class="panel tables-panel">
+              <h3>Таблицы</h3>
+              <div id="tablesList" class="list"></div>
+            </div>
+
+            <!-- Table Data Panel -->
+            <div id="tablePanel" class="panel table-panel hidden">
+              <h3 id="tableName"></h3>
+              
+              <div class="pagination-controls">
+                <button class="btn btn-sm" onclick="prevPage()">← Предыдущая</button>
+                <span id="pageNum">1</span>
+                <button class="btn btn-sm" onclick="nextPage()">Следующая →</button>
+              </div>
+
+              <div id="tableSchemaInfo" class="schema-info"></div>
+
+              <div class="table-container">
+                <table id="dataTable" class="data-table">
+                  <thead></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS PAGE -->
+      <section id="page-logs" class="page">
+        <h1>📋 Логи операций</h1>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Пользователь</th>
+                <th>Операция</th>
+                <th>Статус</th>
+                <th>Время</th>
+              </tr>
+            </thead>
+            <tbody id="logsList"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PROFILE PAGE -->
+      <section id="page-profile" class="page">
+        <h1>⚙️ Профиль</h1>
+        <div class="form-box">
+          <div class="input-group">
+            <label>Имя пользователя</label>
+            <input id="profUser" type="text" disabled>
+          </div>
+          <div class="input-group">
+            <label>Email</label>
+            <input id="profEmail" type="email">
+          </div>
+          <div class="input-group">
+            <label>ФИО</label>
+            <input id="profName" type="text">
+          </div>
+          <button class="btn btn-primary" onclick="saveProfile()">💾 Сохранить</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ADD DATABASE MODAL -->
+  <div id="addDBModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Добавить подключение к БД</h2>
+        <button class="modal-close" onclick="closeAddDB()">&times;</button>
+      </div>
+      <form onsubmit="handleAddDB(event)" class="modal-form">
+        <div class="input-group">
+          <label>Название</label>
+          <input id="newDbName" type="text" required>
+        </div>
+        <div class="input-group">
+          <label>Хост</label>
+          <input id="newDbHost" type="text" required>
+        </div>
+        <div class="input-group">
+          <label>Порт</label>
+          <input id="newDbPort" type="number" value="5432" required>
+        </div>
+        <div class="input-group">
+          <label>Пользователь БД</label>
+          <input id="newDbUser" type="text" required>
+        </div>
+        <div class="input-group">
+          <label>Пароль БД</label>
+          <input id="newDbPass" type="password" required>
+        </div>
+        <div class="input-group">
+          <label>Имя базы</label>
+          <input id="newDbDatabase" type="text" required>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Добавить</button>
+          <button type="button" class="btn btn-secondary" onclick="closeAddDB()">Отмена</button>
+        </div>
+        <p id="addDBMsg" class="msg"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

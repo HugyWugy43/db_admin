@@ -1,0 +1,16 @@
+fastapi==0.115.*
+uvicorn[standard]==0.30.*
+sqlalchemy==2.0.*
+alembic==1.13.*
+asyncpg==0.29.*
+redis==5.2.*
+python-jose[cryptography]==3.3.*
+passlib[bcrypt]==1.7.*
+# passlib 1.7.4 ломается на bcrypt>=4.1 (__about__, detect_wrap_bug / лимит 72 байт)
+bcrypt>=4.0.1,<4.1.0
+python-multipart==0.0.12
+pydantic-settings==2.5.*
+
+# GraphQL — обновляем до совместимой версии
+strawberry-graphql[fastapi]==0.315.*
+email-validator>=2.1.0

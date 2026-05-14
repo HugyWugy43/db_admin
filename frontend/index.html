@@ -54,18 +54,33 @@
 
   <!-- MAIN APP -->
   <div id="app" class="app hidden">
-    <!-- SIDEBAR -->
-    <aside class="sidebar">
-      <div class="logo">🗄️ DB Admin</div>
-      <nav>
-        <a class="nav-link active" onclick="go('dash', event)">📊 Дашборд</a>
-        <a class="nav-link" onclick="go('db', event)">🗃️ Базы данных</a>
-        <a class="nav-link" onclick="go('logs', event)">📋 Логи</a>
-        <a class="nav-link" onclick="go('profile', event)">⚙️ Профиль</a>
-      </nav>
-      <div class="user-box">
-        <div id="userName" class="user-name">Загрузка...</div>
-        <button class="btn btn-exit" onclick="logout()">Выход</button>
+    <!-- SIDEBAR: узкая полоса с иконками, при наведении раскрывается с подписями -->
+    <aside class="sidebar sidebar-rail" aria-label="Главное меню">
+      <div class="sidebar-inner">
+        <div class="sidebar-logo" title="DB Administrator">
+          <span class="sidebar-logo-icon" aria-hidden="true">🗄️</span>
+          <span class="sidebar-logo-text">DB Admin</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a href="#" class="nav-item active" data-page="dash" title="Дашборд" onclick="go('dash', event)">
+            <span class="nav-icon" aria-hidden="true">📊</span><span class="nav-label">Дашборд</span>
+          </a>
+          <a href="#" class="nav-item" data-page="db" title="Базы данных" onclick="go('db', event)">
+            <span class="nav-icon" aria-hidden="true">🗃️</span><span class="nav-label">Базы данных</span>
+          </a>
+          <a href="#" class="nav-item" data-page="logs" title="Логи" onclick="go('logs', event)">
+            <span class="nav-icon" aria-hidden="true">📜</span><span class="nav-label">Логи</span>
+          </a>
+          <a href="#" class="nav-item" data-page="profile" title="Профиль" onclick="go('profile', event)">
+            <span class="nav-icon" aria-hidden="true">👤</span><span class="nav-label">Профиль</span>
+          </a>
+        </nav>
+        <div class="sidebar-footer">
+          <div id="userName" class="user-name" title="">…</div>
+          <button type="button" class="btn btn-exit btn-exit-rail" onclick="logout()" title="Выход">
+            <span class="nav-icon" aria-hidden="true">⎋</span><span class="nav-label">Выход</span>
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -73,15 +88,15 @@
     <main class="main">
       <!-- DASHBOARD PAGE -->
       <section id="page-dash" class="page active">
-        <h1>📊 Дашборд</h1>
+      <h1>Дашборд</h1>
         <div class="stats">
           <div class="stat">
             <div class="stat-value" id="stat-users">0</div>
             <div class="stat-label">Пользователей (всего)</div>
           </div>
-          <div class="stat">
+            <div class="stat">
             <div class="stat-value" id="stat-dbs">0</div>
-            <div class="stat-label">Подключений (всего)</div>
+            <div class="stat-label">Ваши подключения к БД</div>
           </div>
           <div class="stat">
             <div class="stat-value" id="stat-active">0</div>
@@ -100,7 +115,9 @@
               <tr>
                 <th>Имя</th>
                 <th>Хост</th>
-                <th>База</th>
+                <th>Сохранённая БД</th>
+                <th>Базы в кластере (сейчас)</th>
+                <th>Привилегии</th>
                 <th>Статус</th>
                 <th>Размер (PG)</th>
                 <th>Сессии</th>
@@ -114,8 +131,8 @@
       <!-- DATABASES PAGE -->
       <section id="page-db" class="page">
         <div class="page-header">
-          <h1>🗃️ Базы данных</h1>
-          <button class="btn btn-primary" onclick="openAddDB()">+ Новое подключение</button>
+          <h1>Базы данных</h1>
+          <button type="button" class="btn btn-primary btn-add-db" onclick="openAddDB()">+ База</button>
         </div>
 
         <!-- DB List View -->
@@ -128,12 +145,18 @@
         <div id="dbDetail" class="db-detail hidden">
           <button class="btn btn-back" onclick="backDB()">← Назад к списку</button>
           <h2 id="dbName" class="db-title"></h2>
+          <p id="dbAccessPriv" class="db-meta-priv muted"></p>
+
+          <div id="serverCatalogPanel" class="panel catalog-panel hidden">
+            <h3>Базы на сервере</h3>
+            <p class="help-text">Список имён баз (<code>pg_database</code>), для которых хватает прав текущего подключения.</p>
+            <ul id="serverCatalogList" class="catalog-chips"></ul>
+          </div>
 
           <div class="db-explorer">
             <!-- Schemas Panel -->
             <div class="panel schemas-panel">
               <h3>Схемы</h3>
-              <p class="help-text schema-hint">Здесь — схемы <em>внутри</em> этой базы. В PostgreSQL <code>template0</code> и <code>template1</code> — это отдельные <em>базы</em> (шаблоны), а не схемы; их не будет в этом списке. Обычно видна схема <code>public</code>.</p>
               <div id="schemasList" class="list"></div>
             </div>
 
@@ -168,7 +191,7 @@
 
       <!-- LOGS PAGE -->
       <section id="page-logs" class="page">
-        <h1>📋 Логи операций</h1>
+        <h1>Логи операций</h1>
         <div class="table-container">
           <table class="data-table">
             <thead>
@@ -186,7 +209,7 @@
 
       <!-- PROFILE PAGE -->
       <section id="page-profile" class="page">
-        <h1>⚙️ Профиль</h1>
+        <h1>Профиль</h1>
         <div class="form-box">
           <div class="input-group">
             <label>Имя пользователя</label>
@@ -200,7 +223,7 @@
             <label>ФИО</label>
             <input id="profName" type="text">
           </div>
-          <button class="btn btn-primary" onclick="saveProfile()">💾 Сохранить</button>
+          <button class="btn btn-primary" onclick="saveProfile()">Сохранить</button>
         </div>
       </section>
     </main>
@@ -210,21 +233,33 @@
   <div id="addDBModal" class="modal hidden">
     <div class="modal-box">
       <div class="modal-header">
-        <h2>Добавить подключение к БД</h2>
+        <h2>Добавить базу данных</h2>
         <button class="modal-close" onclick="closeAddDB()">&times;</button>
       </div>
       <form onsubmit="handleAddDB(event)" class="modal-form">
         <div class="input-group">
-          <label>Название</label>
-          <input id="newDbName" type="text" required>
+          <label>Имя базы на сервере PostgreSQL</label>
+          <input id="newDbDatabase" type="text" required placeholder="например myapp_db" autocomplete="off">
+          <p class="help-text">Имя в кластере и в списке. Для «создать на сервере» — латиница в нижнем регистре, цифры и _.</p>
+        </div>
+        <div class="input-group checkbox-row">
+          <label class="checkbox-label">
+            <input id="newDbCreateOnServer" type="checkbox">
+            Создать эту базу на сервере (CREATE DATABASE), если её ещё нет
+          </label>
+          <p class="help-text">Нужен вход в служебную базу и право CREATEDB или суперпользователь. В Docker: хост сервиса Postgres, часто <code>postgres</code>, порт <code>5432</code>.</p>
         </div>
         <div class="input-group">
           <label>Хост</label>
-          <input id="newDbHost" type="text" required>
+          <input id="newDbHost" type="text" required placeholder="postgres или localhost">
         </div>
         <div class="input-group">
           <label>Порт</label>
           <input id="newDbPort" type="number" value="5432" required>
+        </div>
+        <div class="input-group">
+          <label>Служебная БД (для CREATE и выдачи прав)</label>
+          <input id="newDbMaintenance" type="text" value="postgres" placeholder="postgres">
         </div>
         <div class="input-group">
           <label>Пользователь БД</label>
@@ -234,10 +269,17 @@
           <label>Пароль БД</label>
           <input id="newDbPass" type="password" required>
         </div>
-        <div class="input-group">
-          <label>Имя базы</label>
-          <input id="newDbDatabase" type="text" required>
-        </div>
+        <fieldset class="input-group privileges-fieldset">
+          <legend>Права по умолчанию для этой роли</legend>
+          <p class="help-text">Отображаются в карточке как «Access privileges». При включённой выдаче выполняется <code>GRANT</code> от имени указанного пользователя (нужны права администратора в кластере).</p>
+          <div id="newDbPrivGrid" class="privileges-grid"></div>
+          <div class="input-group checkbox-row" style="margin-top: 12px;">
+            <label class="checkbox-label">
+              <input id="newDbApplyPriv" type="checkbox">
+              Выдать эти права на сервере сейчас (GRANT для роли «Пользователь БД»)
+            </label>
+          </div>
+        </fieldset>
         <div class="modal-actions">
           <button type="submit" class="btn btn-primary">Добавить</button>
           <button type="button" class="btn btn-secondary" onclick="closeAddDB()">Отмена</button>

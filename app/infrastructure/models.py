@@ -48,6 +48,8 @@ class DatabaseModel(Base):
     database_name = Column(String(100), nullable=False)
     status = Column(String(20), default="disconnected")
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # JSON-массив строк привилегий, например: ["CONNECT","USAGE","SELECT"]
+    access_privileges = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     last_checked = Column(DateTime(timezone=True))
@@ -59,8 +61,14 @@ class DatabaseModel(Base):
     backup_logs = relationship("BackupLogModel", back_populates="database")
     
     __table_args__ = (
-        SQLIndex('idx_owner_id', 'owner_id'),
-        UniqueConstraint('owner_id', 'name', name='unique_owner_database_name'),
+        SQLIndex("idx_owner_id", "owner_id"),
+        UniqueConstraint(
+            "owner_id",
+            "host",
+            "port",
+            "database_name",
+            name="unique_owner_host_port_database_name",
+        ),
     )
 
 
@@ -88,7 +96,7 @@ class TableModel(Base):
 
 
 class ColumnModel(Base):
-    """ORM модель колонки таблицы"""
+    """ORM модель колонки БД"""
     __tablename__ = "columns"
     
     id = Column(Integer, primary_key=True, index=True)

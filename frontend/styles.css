@@ -99,6 +99,20 @@ body {
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
+.input-group.checkbox-row .checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.input-group.checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
 .msg {
   font-size: 13px;
   margin-top: 10px;
@@ -181,62 +195,231 @@ body {
   display: none !important;
 }
 
-/* SIDEBAR */
+/* SIDEBAR — узкая полоса, раскрытие при наведении */
+.sidebar.sidebar-rail {
+  width: 58px;
+  min-width: 58px;
+  overflow: hidden;
+  transition: width 0.22s ease, min-width 0.22s ease, box-shadow 0.2s ease;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.sidebar.sidebar-rail:hover {
+  width: 228px;
+  min-width: 228px;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+}
+
 .sidebar {
-  width: 260px;
   background: #2c3e50;
   color: white;
   display: flex;
   flex-direction: column;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
 }
 
-.logo {
-  padding: 20px;
-  font-size: 18px;
-  font-weight: bold;
+.sidebar-inner {
+  width: 228px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
   border-bottom: 1px solid #34495e;
+  min-height: 52px;
 }
 
-.sidebar nav {
+.sidebar-logo-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+  width: 34px;
+  text-align: center;
+}
+
+.sidebar-logo-text {
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.sidebar-rail:hover .sidebar-logo-text {
+  opacity: 1;
+}
+
+.sidebar-nav {
   flex: 1;
-  padding: 15px 0;
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.nav-link {
-  display: block;
-  width: 100%;
-  padding: 12px 20px;
-  background: none;
-  border: none;
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  margin: 2px 6px;
+  border-radius: 8px;
   color: #bdc3c7;
-  text-align: left;
+  text-decoration: none;
   cursor: pointer;
-  transition: 0.2s;
-  font-size: 14px;
+  transition: background 0.15s, color 0.15s;
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
 }
 
-.nav-link:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
-.nav-link.active {
+.nav-item.active {
   background: #667eea;
-  color: white;
-  border-left: 3px solid #ffc107;
+  color: #fff;
+  box-shadow: inset 3px 0 0 #ffc107;
 }
 
-.user-box {
-  padding: 20px;
+.nav-icon {
+  font-size: 18px;
+  width: 34px;
+  text-align: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.nav-label {
+  white-space: nowrap;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.sidebar-rail:hover .nav-label {
+  opacity: 1;
+}
+
+.sidebar-footer {
+  padding: 12px 10px 16px;
   border-top: 1px solid #34495e;
 }
 
-.user-name {
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: #bdc3c7;
+.sidebar-footer .user-name {
+  font-size: 12px;
+  color: #95a5a6;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
+
+.btn-exit-rail {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  justify-content: flex-start;
+  background: #c0392b;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.btn-exit-rail:hover {
+  filter: brightness(1.06);
+}
+
+.btn-add-db {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+.privileges-fieldset {
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  padding: 12px 14px 14px;
+  margin-bottom: 16px;
+}
+
+.privileges-fieldset legend {
+  font-weight: 600;
+  font-size: 14px;
+  padding: 0 6px;
+}
+
+.privileges-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 8px;
+}
+
+.priv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.priv-chip input {
+  margin: 0;
+}
+
+.db-meta-priv {
+  margin: -8px 0 16px;
+  font-size: 13px;
+}
+
+.cluster-names-cell {
+  max-width: 360px;
+  vertical-align: top;
+}
+
+.cluster-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  gap: 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+/* Базовый вид чипа (на дашборде нет .catalog-panel — раньше стили не применялись) */
+.cluster-cell .chip {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #f1f3f5;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.cluster-cell .chip.chip-current {
+  background: #e7ecff;
+  border: 1px solid #667eea;
+  font-weight: 600;
+}
+
+
 
 /* MAIN */
 .main {
@@ -533,6 +716,9 @@ body {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  overflow-y: auto;
+  padding: 24px 16px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal.hidden {
@@ -544,7 +730,13 @@ body {
   border-radius: 8px;
   width: 100%;
   max-width: 450px;
+  max-height: min(90vh, calc(100dvh - 48px));
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: auto;
+  flex-shrink: 0;
 }
 
 .modal-header {
@@ -553,6 +745,7 @@ body {
   align-items: center;
   padding: 20px;
   border-bottom: 1px solid #eee;
+  flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -573,6 +766,9 @@ body {
 
 .modal-form {
   padding: 20px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .modal-actions {
@@ -585,7 +781,79 @@ body {
   flex: 1;
 }
 
-/* RESPONSIVE */
+/* TOOLBAR & CLUSTERS */
+.card-like {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+.db-toolbar label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: #2c3e50;
+}
+
+.toolbar-row {
+  max-width: 520px;
+}
+
+.select-wide {
+  width: 100%;
+  max-width: 520px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.toolbar-hint {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5568d3;
+  background: #eef0ff;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.muted {
+  color: #888;
+  font-size: 13px;
+}
+
+.catalog-panel ul.catalog-chips {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.catalog-panel .chip {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #f1f3f5;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.inline-check {
+  font-size: 13px;
+  cursor: pointer;
+}
+
 @media (max-width: 1024px) {
   .db-explorer {
     grid-template-columns: 1fr;
@@ -598,13 +866,14 @@ body {
 }
 
 @media (max-width: 768px) {
-  .sidebar {
-    width: 80px;
+  .sidebar.sidebar-rail {
+    width: 58px;
+    min-width: 58px;
   }
-  
-  .logo, .nav-link, .user-box {
-    font-size: 11px;
-    padding: 10px;
+
+  .sidebar.sidebar-rail:hover {
+    width: 200px;
+    min-width: 200px;
   }
   
   .db-grid {

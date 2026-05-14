@@ -126,14 +126,75 @@ function logout() {
 function showApp() {
   document.getElementById('loginPage').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  document.getElementById('userName').textContent = state.user;
+  const un = document.getElementById('userName');
+  un.textContent = state.user;
+  un.title = state.user || '';
+}
+
+function formatPrivilegesDisplay(db) {
+  const raw = db.access_privileges;
+  if (!raw || !String(raw).trim()) return 'CONNECT, USAGE, SELECT';
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length) return arr.map((x) => escapeHtml(String(x))).join(', ');
+  } catch (_) {
+    /* fallthrough */
+  }
+  return escapeHtml(String(raw));
+}
+
+function ensurePrivilegeGrid() {
+  const grid = document.getElementById('newDbPrivGrid');
+  if (!grid || grid.dataset.ready === '1') return;
+  const opts = ['CONNECT', 'USAGE', 'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+  const defaults = new Set(['CONNECT', 'USAGE', 'SELECT']);
+  grid.innerHTML = opts
+    .map(
+      (p) =>
+        `<label class="priv-chip"><input type="checkbox" name="dbpriv" value="${p}" ${defaults.has(p) ? 'checked' : ''}> ${p}</label>`
+    )
+    .join('');
+  grid.dataset.ready = '1';
+}
+
+function collectSelectedPrivileges() {
+  return Array.from(document.querySelectorAll('#newDbPrivGrid input[name="dbpriv"]:checked')).map((i) => i.value);
+}
+
+/** Ячейка дашборда: живой список pg_database через postgres, независимо от целевой БД */
+function formatClusterCatalogCell(c, savedDbName) {
+  const cat = c.cluster_catalog;
+  if (!cat) return '—';
+  if (!cat.ok) {
+    const err = cat.error || 'ошибка';
+    return `<span class="muted" title="${escapeHtml(err)}">нет доступа к каталогу</span>`;
+  }
+  const names = (cat.databases || []).map((x) => x.name).filter(Boolean);
+  if (!names.length) {
+    return '<span class="muted">пусто</span>';
+  }
+  const inCluster = names.includes(savedDbName);
+  const rowHint = inCluster
+    ? ''
+    : ' title="Сохранённая база сейчас не видна в каталоге (переименована, удалена или нет прав на pg_database)"';
+  const chips = names
+    .map((n) => {
+      const hl = n === savedDbName ? ' chip-current' : '';
+      return `<span class="chip${hl}">${escapeHtml(n)}</span>`;
+    })
+    .join('');
+  return `<div class="cluster-cell"${rowHint}>${chips}</div>`;
 }
 
 function go(page, evt) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-  document.getElementById('page-' + page).classList.add('active');
-  evt?.target?.classList.add('active');
+  evt?.preventDefault();
+  document.querySelectorAll('.page').forEach((p) => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach((l) => l.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.add('active');
+  const nav =
+    evt?.currentTarget?.closest?.('.nav-item') || document.querySelector(`.nav-item[data-page="${page}"]`);
+  if (nav) nav.classList.add('active');
   if (page === 'dash') loadStats();
   if (page === 'db') loadDBList();
   if (page === 'logs') loadLogs();
@@ -155,26 +216,35 @@ async function loadStats() {
     const data = await r.json();
     const s = data.summary || {};
     document.getElementById('stat-users').textContent = s.total_users ?? 0;
-    document.getElementById('stat-dbs').textContent = s.total_databases ?? 0;
+    document.getElementById('stat-dbs').textContent =
+      s.your_databases_count ?? (data.connections || []).length ?? 0;
     document.getElementById('stat-active').textContent = s.active_connections ?? 0;
     const totalB = s.remote_databases_total_bytes;
     document.getElementById('stat-remote-size').textContent =
       typeof totalB === 'number' && totalB > 0 ? formatBytes(totalB) : (totalB === 0 ? '0 Б' : '—');
+    const catOk = s.cluster_catalogs_ok_count ?? 0;
     const reach = s.remote_databases_reachable_count ?? 0;
     const totalConn = (data.connections || []).length;
     hint.textContent =
-      `Доступно для опроса размера: ${reach} из ${totalConn} подключений. ` +
-      'Размер — это pg_database_size (данные в кластере), не свободное место на диске сервера.';
+      `Колонка «Базы в кластере» — актуальный список из PostgreSQL (pg_database), запрос идёт через служебную БД postgres и ` +
+      `может отображаться, даже если к сохранённой базе сейчас не подключиться. ` +
+      `Каталог удалось прочитать: ${catOk} из ${totalConn}. ` +
+      `Размер и сессии — только для сохранённой БД при успешном подключении к ней (${reach} из ${totalConn}).`;
     tbody.innerHTML = (data.connections || [])
       .map((c) => {
         const m = c.metrics || {};
         const sz = m.reachable && m.database_size_bytes != null ? formatBytes(m.database_size_bytes) : '—';
         const sess = m.reachable && m.active_backends != null ? m.active_backends : '—';
         const err = m.error ? `<span title="${escapeHtml(m.error)}">ошибка</span>` : '';
+        const priv = formatPrivilegesDisplay({ access_privileges: c.access_privileges });
+        const savedDb = c.database_name;
+        const clusterHtml = formatClusterCatalogCell(c, savedDb);
         return `<tr>
           <td>${escapeHtml(c.name)}</td>
           <td>${escapeHtml(c.host)}:${c.port}</td>
-          <td>${escapeHtml(c.database_name)}</td>
+          <td>${escapeHtml(savedDb)}</td>
+          <td class="cluster-names-cell">${clusterHtml}</td>
+          <td class="priv-cell">${priv}</td>
           <td>${escapeHtml(c.status || '—')}${err ? ' ' + err : ''}</td>
           <td>${sz}</td>
           <td>${sess}</td>
@@ -182,7 +252,7 @@ async function loadStats() {
       })
       .join('');
     if (!data.connections || !data.connections.length) {
-      tbody.innerHTML = '<tr><td colspan="6">Нет сохранённых подключений</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Нет зарегистрированных баз</td></tr>';
     }
   } catch (e) {
     console.error(e);
@@ -197,7 +267,8 @@ async function loadDBList() {
   msg.textContent = '';
   grid.innerHTML = '<p class="empty">Загрузка…</p>';
   try {
-    const r = await fetch(`${API}/admin/databases?skip=0&limit=100`, {
+    const url = `${API}/admin/databases?skip=0&limit=100`;
+    const r = await fetch(url, {
       headers: { Authorization: `Bearer ${state.token}` }
     });
     if (!r.ok) {
@@ -207,26 +278,32 @@ async function loadDBList() {
       return;
     }
     const dbs = await r.json();
+    const myId = Number(localStorage.getItem('userId'));
     grid.innerHTML = '';
     if (!dbs.length) {
-      grid.innerHTML = '<p class="empty">Нет сохранённых подключений. Нажмите «Новое подключение».</p>';
+      grid.innerHTML = '<p class="empty">Нет сохранённых подключений. Добавьте базу.</p>';
       return;
     }
-    dbs.forEach(db => {
+    dbs.forEach((db) => {
       const card = document.createElement('div');
       card.className = 'db-card';
       const statusClass = db.status === 'connected' ? 'status-ok' : db.status === 'error' ? 'status-err' : '';
+      const ownerActions =
+        db.owner_id === myId
+          ? `<button type="button" class="btn btn-sm" onclick="backupDB(${db.id})" title="pg_dump">Бэкап</button>
+           <button type="button" class="btn btn-sm btn-danger" onclick="delDB(${db.id})">Удалить</button>`
+          : '<span class="muted">чужая запись</span>';
       card.innerHTML = `
         <h3>${escapeHtml(db.name)}</h3>
         <p class="db-status ${statusClass}"><strong>Статус:</strong> ${escapeHtml(db.status || '—')}</p>
-        <p><strong>Хост:</strong> ${escapeHtml(db.host)}:${db.port}</p>
+        <p><strong>Сервер:</strong> ${escapeHtml(db.host)}:${db.port}</p>
         <p><strong>БД:</strong> ${escapeHtml(db.database_name)}</p>
         <p><strong>Пользователь:</strong> ${escapeHtml(db.username)}</p>
+        <p class="db-priv-line"><strong>Access privileges:</strong> ${formatPrivilegesDisplay(db)}</p>
         <div class="card-actions">
           <button type="button" class="btn btn-sm" onclick="openDB(${db.id})">Открыть</button>
           <button type="button" class="btn btn-sm" onclick="testDB(${db.id})">Тест</button>
-          <button type="button" class="btn btn-sm" onclick="backupDB(${db.id})" title="pg_dump в каталог backups">Бэкап</button>
-          <button type="button" class="btn btn-sm btn-danger" onclick="delDB(${db.id})">Удалить</button>
+          ${ownerActions}
         </div>
       `;
       grid.appendChild(card);
@@ -247,29 +324,52 @@ function escapeHtml(s) {
 
 async function openDB(id) {
   try {
-    const r = await fetch(`${API}/admin/databases?skip=0&limit=100`, {
+    const r = await fetch(`${API}/admin/databases/${id}`, {
       headers: { Authorization: `Bearer ${state.token}` }
     });
     if (!r.ok) {
       alert('❌ ' + (await parseErrorResponse(r)));
       return;
     }
-    const dbs = await r.json();
-    state.currentDB = dbs.find(d => d.id === id);
-    if (!state.currentDB) {
-      alert('Подключение не найдено');
-      return;
-    }
+    state.currentDB = await r.json();
     state.currentSchema = 'public';
     state.currentTable = null;
     state.pageNum = 0;
     document.getElementById('dbList').classList.add('hidden');
     document.getElementById('dbDetail').classList.remove('hidden');
     document.getElementById('dbName').textContent = state.currentDB.name;
+    const ap = document.getElementById('dbAccessPriv');
+    if (ap) {
+      ap.innerHTML = '<strong>Access privileges:</strong> ' + formatPrivilegesDisplay(state.currentDB);
+    }
     document.getElementById('tablePanel').classList.add('hidden');
     loadSchemas();
     loadTables();
+    loadServerCatalogPanel();
   } catch (e) { console.error(e); }
+}
+
+async function loadServerCatalogPanel() {
+  const wrap = document.getElementById('serverCatalogPanel');
+  const ul = document.getElementById('serverCatalogList');
+  if (!wrap || !ul || !state.currentDB) return;
+  wrap.classList.remove('hidden');
+  ul.innerHTML = '<li class="muted">Загрузка…</li>';
+  try {
+    const r = await fetch(`${API}/admin/databases/${state.currentDB.id}/server-databases`, {
+      headers: { Authorization: `Bearer ${state.token}` }
+    });
+    if (!r.ok) {
+      ul.innerHTML = `<li class="muted">${escapeHtml(await parseErrorResponse(r))}</li>`;
+      return;
+    }
+    const names = await r.json();
+    ul.innerHTML = names.length
+      ? names.map((x) => `<li><span class="chip">${escapeHtml(x.name)}</span></li>`).join('')
+      : '<li class="muted">Нет доступных имён или нет прав на служебную БД</li>';
+  } catch (e) {
+    ul.innerHTML = '<li class="muted">Ошибка сети</li>';
+  }
 }
 
 function backDB() {
@@ -469,8 +569,9 @@ function nextPage() {
 }
 
 // ===== ADD DB MODAL =====
-function openAddDB() {
+async function openAddDB() {
   document.getElementById('addDBMsg').textContent = '';
+  ensurePrivilegeGrid();
   document.getElementById('addDBModal').classList.remove('hidden');
 }
 
@@ -482,21 +583,31 @@ async function handleAddDB(e) {
   e.preventDefault();
   const msgEl = document.getElementById('addDBMsg');
   msgEl.textContent = '';
-  const name = document.getElementById('newDbName').value.trim();
   const host = document.getElementById('newDbHost').value.trim();
   const port = document.getElementById('newDbPort').value;
-  const user = document.getElementById('newDbUser').value;
+  const user = document.getElementById('newDbUser').value.trim();
   const pass = document.getElementById('newDbPass').value;
-  const db = document.getElementById('newDbDatabase').value.trim();
+  const database = document.getElementById('newDbDatabase').value.trim();
+  const createOnServer = document.getElementById('newDbCreateOnServer').checked;
+  const maint = (document.getElementById('newDbMaintenance')?.value || 'postgres').trim() || 'postgres';
+  const applyPriv = document.getElementById('newDbApplyPriv')?.checked;
+  const privJson = JSON.stringify(collectSelectedPrivileges());
   const uid = localStorage.getItem('userId');
+  if (!host) {
+    msgEl.textContent = '❌ Укажите хост';
+    return;
+  }
   try {
     const body = new URLSearchParams();
-    body.append('name', name);
     body.append('host', host);
     body.append('port', port);
     body.append('username', user);
     body.append('password', pass);
-    body.append('database_name', db);
+    body.append('database_name', database);
+    body.append('create_on_server', createOnServer ? 'true' : 'false');
+    body.append('maintenance_database', maint);
+    body.append('access_privileges', privJson);
+    body.append('apply_privileges', applyPriv ? 'true' : 'false');
     if (uid) body.append('owner_id', uid);
     const r = await fetch(`${API}/admin/databases`, {
       method: 'POST',
@@ -507,6 +618,8 @@ async function handleAddDB(e) {
       closeAddDB();
       e.target.reset();
       document.getElementById('newDbPort').value = '5432';
+      const m = document.getElementById('newDbMaintenance');
+      if (m) m.value = 'postgres';
       loadDBList();
       loadStats();
     } else {

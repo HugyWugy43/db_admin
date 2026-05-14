@@ -55,12 +55,14 @@ class Database(BaseModel):
     database_name: str
     status: str = "disconnected"
     owner_id: Optional[int] = None
+    access_privileges: Optional[str] = None  # JSON-массив привилегий для роли username
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_checked: Optional[datetime] = None
     
     class Config:
         from_attributes = True
+
 
 class Column(BaseModel):
     """Сущность колонки таблицы"""

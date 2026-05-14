@@ -2,14 +2,25 @@
 Инфраструктурный слой - репозитории для доступа к данным
 """
 from typing import List, Optional
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.models import (
-    UserModel, DatabaseModel, TableModel, ColumnModel, 
-    IndexModel, QueryLogModel, BackupLogModel
+    UserModel,
+    DatabaseModel,
+    TableModel,
+    ColumnModel,
+    IndexModel,
+    QueryLogModel,
+    BackupLogModel,
 )
 from app.domain.entities import (
-    User, Database, TableInfo, Column, Index, QueryLog, BackupLog
+    User,
+    Database,
+    TableInfo,
+    Column,
+    Index,
+    QueryLog,
+    BackupLog,
 )
 
 
@@ -171,16 +182,23 @@ class DatabaseRepository:
         return int(q.scalar_one())
     
     async def delete(self, db_id: int) -> bool:
-        """Удаление БД"""
-        result = await self.db.execute(
-            select(DatabaseModel).where(DatabaseModel.id == db_id)
-        )
+        """Удаление подключения и связанных записей (логи, локальные метаданные таблиц)."""
+        result = await self.db.execute(select(DatabaseModel).where(DatabaseModel.id == db_id))
         db = result.scalars().first()
-        if db:
-            await self.db.delete(db)
-            await self.db.commit()
-            return True
-        return False
+        if not db:
+            return False
+        await self.db.execute(delete(QueryLogModel).where(QueryLogModel.database_id == db_id))
+        await self.db.execute(delete(BackupLogModel).where(BackupLogModel.database_id == db_id))
+        t_ids = (
+            await self.db.execute(select(TableModel.id).where(TableModel.database_id == db_id))
+        ).scalars().all()
+        for tid in t_ids:
+            await self.db.execute(delete(ColumnModel).where(ColumnModel.table_id == tid))
+            await self.db.execute(delete(IndexModel).where(IndexModel.table_id == tid))
+        await self.db.execute(delete(TableModel).where(TableModel.database_id == db_id))
+        await self.db.delete(db)
+        await self.db.commit()
+        return True
 
 
 class TableRepository:

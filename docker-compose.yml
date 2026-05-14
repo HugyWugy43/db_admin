@@ -26,6 +26,9 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      # Подключения к «удалённым» БД с хостом localhost из UI → реальный Postgres в compose
+      DOCKER_PG_HOST: postgres
     depends_on:
       - postgres
       - redis

@@ -14,6 +14,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Тот же DSN, что у приложения (в Docker — postgres, не localhost из alembic.ini)
+from app.core.config import settings as app_settings
+
+_sync_url = app_settings.DATABASE_URL
+if "+asyncpg" in _sync_url:
+    _sync_url = _sync_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+config.set_main_option("sqlalchemy.url", _sync_url)
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 from app.infrastructure.models import Base

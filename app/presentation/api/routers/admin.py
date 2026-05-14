@@ -6,9 +6,10 @@ import os
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Form, Header, HTTPException
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,6 +22,12 @@ router = APIRouter()
 def _backup_dir() -> str:
     """Каталог дампов (совпадает с DatabaseService.backup_database_to_file)."""
     return os.environ.get("BACKUP_DIR") or "/tmp/app_backups"
+
+
+def _parse_form_bool(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 def _parse_bearer_user_id(authorization: Optional[str]) -> Optional[int]:
@@ -49,6 +56,7 @@ class DatabasePublic(BaseModel):
     database_name: str
     status: str
     owner_id: int
+    access_privileges: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_checked: Optional[datetime] = None
@@ -64,6 +72,7 @@ class DatabasePublic(BaseModel):
             database_name=d.database_name,
             status=d.status,
             owner_id=d.owner_id,
+            access_privileges=d.access_privileges,
             created_at=d.created_at,
             updated_at=d.updated_at,
             last_checked=d.last_checked,
@@ -74,19 +83,36 @@ def _to_public_list(databases: List[Database]) -> List[DatabasePublic]:
     return [DatabasePublic.from_entity(x) for x in databases]
 
 
+async def _require_owner_database(
+    db_service: DatabaseService, database_id: int, user_id: int
+) -> Database:
+    d = await db_service.get_database(database_id)
+    if d is None or d.owner_id != user_id:
+        raise HTTPException(status_code=404, detail="БД не найдена")
+    return d
+
+
 @router.post("/databases", response_model=DatabasePublic)
 async def create_database(
-    name: str = Form(...),
     host: str = Form(...),
     port: int = Form(5432),
     username: str = Form(...),
     password: str = Form(...),
     database_name: str = Form(...),
+    create_on_server: str = Form("false"),
+    maintenance_database: str = Form("postgres"),
+    access_privileges: str = Form(""),
+    apply_privileges: str = Form("false"),
     owner_id: Optional[int] = Form(None),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Создание подключения к БД (тело: application/x-www-form-urlencoded)."""
+    """
+    Регистрация подключения к PostgreSQL.
+    При create_on_server=true выполняется CREATE DATABASE на сервере.
+    access_privileges — JSON-массив строк (CONNECT, SELECT, …); при apply_privileges=true
+    выдаются права роли username на созданную/указанную БД (нужны права администратора).
+    """
     token_uid = _parse_bearer_user_id(authorization)
     effective_owner = token_uid if token_uid is not None else owner_id
     if effective_owner is None:
@@ -95,23 +121,81 @@ async def create_database(
             detail="Укажите owner_id в форме или войдите (Bearer token_<id>)",
         )
 
+    final_db = (database_name or "").strip()
+    if not final_db:
+        raise HTTPException(status_code=400, detail="Укажите имя базы данных")
+
+    res_host = (host or "").strip()
+    if not res_host:
+        raise HTTPException(status_code=400, detail="Укажите хост")
+
+    res_port = port
     db_service = DatabaseService(db)
-    database = await db_service.create_database(
-        name=name,
-        host=host,
-        port=port,
-        username=username,
-        password=password,
-        database_name=database_name,
-        owner_id=effective_owner,
-    )
+    priv_list = db_service.normalize_privileges_json(access_privileges)
+    priv_json_str = db_service.privileges_json_string(priv_list)
+
+    if _parse_form_bool(create_on_server):
+        maint = (maintenance_database or "").strip() or "postgres"
+        try:
+            final_db = await db_service.create_postgresql_database_if_missing(
+                host=res_host,
+                port=port,
+                username=username,
+                password=password,
+                new_database=final_db,
+                maintenance_database=maint,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    else:
+        maint = (maintenance_database or "").strip() or "postgres"
+
+    display_name = final_db
+
+    try:
+        database = await db_service.create_database(
+            name=display_name,
+            host=res_host,
+            port=port,
+            username=username,
+            password=password,
+            database_name=final_db,
+            owner_id=effective_owner,
+            access_privileges=priv_json_str,
+        )
+    except IntegrityError as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="У вас уже есть подключение с таким именем базы на этом сервере (тот же хост и порт). "
+            "На другом сервере то же имя допустимо.",
+        ) from e
+
+    if _parse_form_bool(apply_privileges):
+        try:
+            await db_service.apply_database_role_privileges(
+                host=res_host,
+                port=port,
+                admin_user=username,
+                admin_password=password,
+                database_name=final_db,
+                grantee_role=username,
+                privileges=priv_list,
+                maintenance_database=maint,
+            )
+        except RuntimeError as e:
+            await db_service.delete_database(database.id)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     log_uid = token_uid if token_uid is not None else effective_owner
     if log_uid is not None and database.id is not None:
         try:
             await QueryLogService(db).log_query(
                 log_uid,
                 database.id,
-                f'Подключение зарегистрировано: «{name}» → {host}:{port}/{database_name}',
+                f'База «{display_name}» → {res_host}:{res_port}/{final_db}',
                 "success",
                 None,
                 0.0,
@@ -129,7 +213,7 @@ async def get_databases(
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Список БД: при Bearer token_<id> фильтр по владельцу из токена, иначе по owner_id."""
+    """Список сохранённых подключений к БД текущего пользователя (владелец)."""
     db_service = DatabaseService(db)
     token_uid = _parse_bearer_user_id(authorization)
     effective_owner = token_uid if token_uid is not None else owner_id
@@ -145,26 +229,30 @@ async def get_databases(
 @router.get("/databases/{database_id}", response_model=DatabasePublic)
 async def get_database(
     database_id: int,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Получение БД по ID (без пароля в ответе)."""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
     return DatabasePublic.from_entity(database)
 
 
 @router.post("/databases/{database_id}/test-connection")
 async def test_database_connection(
     database_id: int,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Тестирование подключения к БД"""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
 
     is_connected = await db_service.test_connection(
         database.host,
@@ -186,13 +274,15 @@ async def test_database_connection(
 async def get_database_tables(
     database_id: int,
     schema: str = "public",
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Получение таблиц БД"""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
 
     try:
         tables = await db_service.get_database_tables(
@@ -211,13 +301,15 @@ async def get_database_tables(
 @router.get("/databases/{database_id}/schemas")
 async def get_database_schemas(
     database_id: int,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Получение схем БД"""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
 
     try:
         schemas = await db_service.get_database_schemas(
@@ -232,18 +324,47 @@ async def get_database_schemas(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/databases/{database_id}/server-databases")
+async def get_server_catalog_databases(
+    database_id: int,
+    maintenance_database: str = Query("postgres"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список имён баз в кластере (подключение к служебной БД, по умолчанию postgres)."""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
+    db_service = DatabaseService(db)
+    database = await _require_owner_database(db_service, database_id, uid)
+    try:
+        return await db_service.list_server_catalog_databases(
+            database.host,
+            database.port,
+            database.username,
+            database.password,
+            maintenance_database=maintenance_database or "postgres",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.get("/databases/{database_id}/tables/{table_name}/columns")
 async def get_table_columns(
     database_id: int,
     table_name: str,
     schema: str = "public",
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Получение схемы таблицы"""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
 
     try:
         columns = await db_service.get_table_columns(
@@ -267,13 +388,15 @@ async def get_table_rows(
     schema: str = "public",
     limit: int = 50,
     offset: int = 0,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
     """Получение данных таблицы"""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
-    database = await db_service.get_database(database_id)
-    if not database:
-        raise HTTPException(status_code=404, detail="БД не найдена")
+    database = await _require_owner_database(db_service, database_id, uid)
 
     try:
         rows = await db_service.get_table_rows(
@@ -295,10 +418,17 @@ async def get_table_rows(
 @router.delete("/databases/{database_id}")
 async def delete_database(
     database_id: int,
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
 ):
-    """Удаление БД"""
+    """Удаление записи о подключении (только владелец)."""
+    uid = _parse_bearer_user_id(authorization)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Требуется вход")
     db_service = DatabaseService(db)
+    database = await db_service.get_database(database_id)
+    if database is None or database.owner_id != uid:
+        raise HTTPException(status_code=404, detail="БД не найдена")
     if not await db_service.delete_database(database_id):
         raise HTTPException(status_code=404, detail="БД не найдена")
     return {"message": "БД удалена"}

@@ -1,6 +1,7 @@
 """
 Слой сервисов - бизнес-логика приложения
 """
+import json
 import asyncio
 import logging
 import os
@@ -11,7 +12,10 @@ from datetime import datetime, timezone
 from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.repository import (
-    UserRepository, DatabaseRepository, TableRepository, QueryLogRepository
+    UserRepository,
+    DatabaseRepository,
+    TableRepository,
+    QueryLogRepository,
 )
 from app.domain.entities import User, Database, TableInfo, QueryLog
 import asyncpg
@@ -27,11 +31,39 @@ def _validate_identifier(identifier: str) -> str:
     return identifier
 
 
+def _validate_pg_new_db_name(name: str) -> str:
+    """
+    Имя для CREATE DATABASE без кавычек: к нижнему регистру, латиница/цифры/_,
+    не длиннее 63 символов (NAMEDATALEN в PostgreSQL).
+    """
+    s = (name or "").strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", s):
+        raise ValueError(
+            "Имя базы для создания на сервере: строчные латинские буквы, цифры и подчёркивание, "
+            "до 63 символов, первый символ — буква."
+        )
+    return s
+
+
 def _asyncpg_ssl_kw() -> dict:
     """Совместимо с libpq/pg_dump: при PGSSLMODE=disable не пытаемся TLS (типичный dev Docker)."""
     if os.environ.get("PGSSLMODE", "disable").lower() == "disable":
         return {"ssl": False}
     return {}
+
+
+def _resolve_remote_pg_host(host: str) -> str:
+    """
+    Внутри Docker localhost — это контейнер приложения, а не Postgres.
+    Если задан DOCKER_PG_HOST (например postgres), подменяем им localhost/127.0.0.1.
+    """
+    h = (host or "").strip()
+    alt = (os.environ.get("DOCKER_PG_HOST") or "").strip()
+    if not alt:
+        return h
+    if h.lower() in ("localhost", "127.0.0.1", "::1"):
+        return alt
+    return h
 
 
 class UserService:
@@ -105,13 +137,58 @@ class UserService:
 
 class DatabaseService:
     """Сервис управления подключениями к БД"""
-    
+
+    ALLOWED_PRIVILEGES = frozenset(
+        {
+            "CONNECT",
+            "USAGE",
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+        }
+    )
+    TABLE_PRIVILEGES = frozenset(
+        {"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"}
+    )
+
     def __init__(self, db: AsyncSession):
         self.repo = DatabaseRepository(db)
-    
-    async def create_database(self, name: str, host: str, port: int, 
-                             username: str, password: str, 
-                             database_name: str, owner_id: int) -> Database:
+
+    @staticmethod
+    def normalize_privileges_json(raw: Optional[str]) -> List[str]:
+        """Парсинг JSON-массива привилегий; по умолчанию CONNECT + USAGE + SELECT."""
+        default = ["CONNECT", "USAGE", "SELECT"]
+        if not raw or not str(raw).strip():
+            return list(default)
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list):
+                out = [str(x).upper().strip() for x in data if str(x).strip()]
+                out = [p for p in out if p in DatabaseService.ALLOWED_PRIVILEGES]
+                return sorted(set(out)) if out else list(default)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return list(default)
+
+    @staticmethod
+    def privileges_json_string(privileges: List[str]) -> str:
+        return json.dumps(sorted(set(privileges)), ensure_ascii=False)
+
+    async def create_database(
+        self,
+        name: str,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        database_name: str,
+        owner_id: int,
+        access_privileges: Optional[str] = None,
+    ) -> Database:
         """Создание подключения к БД"""
         database = Database(
             name=name,
@@ -121,17 +198,176 @@ class DatabaseService:
             password=password,
             database_name=database_name,
             owner_id=owner_id,
-            status="disconnected"
+            status="disconnected",
+            access_privileges=access_privileges,
         )
-        
+
         return await self.repo.create(database)
-    
+
+    async def create_postgresql_database_if_missing(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        new_database: str,
+        maintenance_database: str = "postgres",
+    ) -> str:
+        """
+        Подключиться к служебной базе (по умолчанию postgres) и выполнить CREATE DATABASE,
+        если базы с таким datname ещё нет. Нужны права CREATEDB или суперпользователь.
+        """
+        new_db = _validate_pg_new_db_name(new_database)
+        maint_db = _validate_pg_new_db_name(maintenance_database)
+        rh = _resolve_remote_pg_host(host)
+        conn = None
+        try:
+            conn = await asyncpg.connect(
+                host=rh,
+                port=port,
+                user=username,
+                password=password,
+                database=maint_db,
+                timeout=30,
+                **_asyncpg_ssl_kw(),
+            )
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname = $1",
+                new_db,
+            )
+            if exists:
+                return new_db
+            await conn.execute(f"CREATE DATABASE {new_db}")
+            return new_db
+        except ConnectionRefusedError as e:
+            raise RuntimeError(
+                "Не удалось подключиться к PostgreSQL (отказ в соединении). "
+                "В Docker укажите хост сервиса — обычно postgres, а не localhost; "
+                "либо задайте DOCKER_PG_HOST=postgres в окружении контейнера приложения."
+            ) from e
+        except asyncpg.InvalidPasswordError as e:
+            raise RuntimeError("Неверный логин или пароль при подключении к серверу PostgreSQL.") from e
+        except asyncpg.InvalidCatalogNameError as e:
+            raise RuntimeError(
+                f"Не удалось подключиться к административной базе «{maint_db}». "
+                "Укажите существующую базу (часто postgres), к которой разрешён вход."
+            ) from e
+        except asyncpg.PostgresError as e:
+            raise RuntimeError(
+                f"PostgreSQL: {e.__class__.__name__}: {getattr(e, 'message', str(e))}"
+            ) from e
+        finally:
+            if conn is not None:
+                await conn.close()
+
+    async def apply_database_role_privileges(
+        self,
+        host: str,
+        port: int,
+        admin_user: str,
+        admin_password: str,
+        database_name: str,
+        grantee_role: str,
+        privileges: List[str],
+        maintenance_database: str = "postgres",
+    ) -> None:
+        """
+        Выдать роли grantee_role привилегии на указанной БД (от имени admin_*).
+        CONNECT — на уровне БД; USAGE/таблицы/последовательности — в public.
+        """
+        db = _validate_pg_new_db_name(database_name)
+        maint = _validate_pg_new_db_name(maintenance_database)
+        rh = _resolve_remote_pg_host(host)
+        privs = sorted(
+            {
+                p.upper()
+                for p in privileges
+                if p and str(p).upper().strip() in self.ALLOWED_PRIVILEGES
+            }
+        )
+        if not privs:
+            return
+
+        conn_maint: Optional[asyncpg.Connection] = None
+        conn_db: Optional[asyncpg.Connection] = None
+        try:
+            conn_maint = await asyncpg.connect(
+                host=rh,
+                port=port,
+                user=admin_user,
+                password=admin_password,
+                database=maint,
+                timeout=30,
+                **_asyncpg_ssl_kw(),
+            )
+            grantee_q = await conn_maint.fetchval(
+                "SELECT quote_ident($1::text)", grantee_role
+            )
+            if "CONNECT" in privs:
+                await conn_maint.execute(
+                    f"GRANT CONNECT ON DATABASE {db} TO {grantee_q}"
+                )
+
+            table_privs = [p for p in privs if p in self.TABLE_PRIVILEGES]
+            schema_needed = "USAGE" in privs or bool(table_privs) or "SELECT" in privs
+
+            if schema_needed:
+                await conn_maint.close()
+                conn_maint = None
+                conn_db = await asyncpg.connect(
+                    host=rh,
+                    port=port,
+                    user=admin_user,
+                    password=admin_password,
+                    database=db,
+                    timeout=30,
+                    **_asyncpg_ssl_kw(),
+                )
+                gq = await conn_db.fetchval(
+                    "SELECT quote_ident($1::text)", grantee_role
+                )
+                sp = await conn_db.fetchval(
+                    "SELECT quote_ident($1::text)", "public"
+                )
+                await conn_db.execute(f"GRANT USAGE ON SCHEMA {sp} TO {gq}")
+                if table_privs:
+                    priv_sql = ", ".join(table_privs)
+                    await conn_db.execute(
+                        f"GRANT {priv_sql} ON ALL TABLES IN SCHEMA {sp} TO {gq}"
+                    )
+                    await conn_db.execute(
+                        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {sp} "
+                        f"GRANT {priv_sql} ON TABLES TO {gq}"
+                    )
+                if "SELECT" in privs:
+                    await conn_db.execute(
+                        f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {sp} TO {gq}"
+                    )
+                    await conn_db.execute(
+                        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {sp} "
+                        f"GRANT SELECT ON SEQUENCES TO {gq}"
+                    )
+        except ConnectionRefusedError as e:
+            raise RuntimeError(
+                "Не удалось подключиться к PostgreSQL при выдаче прав (отказ в соединении)."
+            ) from e
+        except asyncpg.PostgresError as e:
+            raise RuntimeError(
+                f"PostgreSQL при выдаче прав: {e.__class__.__name__}: "
+                f"{getattr(e, 'message', str(e))}"
+            ) from e
+        finally:
+            if conn_maint is not None:
+                await conn_maint.close()
+            if conn_db is not None:
+                await conn_db.close()
+
     async def test_connection(self, host: str, port: int, username: str, 
                              password: str, database_name: str) -> bool:
         """Тестирование подключения к БД"""
         try:
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -198,7 +434,7 @@ class DatabaseService:
         }
         try:
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -248,7 +484,7 @@ class DatabaseService:
         env = {
             **os.environ,
             "PGPASSWORD": database.password,
-            "PGHOST": str(database.host),
+            "PGHOST": str(_resolve_remote_pg_host(database.host)),
             "PGPORT": str(database.port),
             "PGUSER": database.username,
             "PGDATABASE": database.database_name,
@@ -300,7 +536,7 @@ class DatabaseService:
         try:
             schema = _validate_identifier(schema)
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -324,7 +560,7 @@ class DatabaseService:
         """Получение списка схем из БД"""
         try:
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -353,7 +589,7 @@ class DatabaseService:
             schema = _validate_identifier(schema)
             table_name = _validate_identifier(table_name)
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -388,7 +624,7 @@ class DatabaseService:
             schema = _validate_identifier(schema)
             table_name = _validate_identifier(table_name)
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -410,7 +646,7 @@ class DatabaseService:
             schema = _validate_identifier(schema)
             table_name = _validate_identifier(table_name)
             conn = await asyncpg.connect(
-                host=host,
+                host=_resolve_remote_pg_host(host),
                 port=port,
                 user=username,
                 password=password,
@@ -423,6 +659,41 @@ class DatabaseService:
             return row['total'] if row else 0
         except Exception as e:
             raise Exception(f"Ошибка получения количества строк: {str(e)}")
+
+    async def list_server_catalog_databases(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        maintenance_database: str = "postgres",
+    ) -> List[dict]:
+        """Имена баз в кластере (datistemplate = false), подключение к maintenance_database."""
+        maint_db = _validate_pg_new_db_name(maintenance_database)
+        rh = _resolve_remote_pg_host(host)
+        conn = None
+        try:
+            conn = await asyncpg.connect(
+                host=rh,
+                port=port,
+                user=username,
+                password=password,
+                database=maint_db,
+                timeout=15,
+                **_asyncpg_ssl_kw(),
+            )
+            rows = await conn.fetch(
+                """
+                SELECT d.datname AS name
+                FROM pg_database d
+                WHERE NOT d.datistemplate
+                ORDER BY d.datname
+                """
+            )
+            return [{"name": r["name"]} for r in rows]
+        finally:
+            if conn is not None:
+                await conn.close()
 
 
 class QueryLogService:
@@ -480,21 +751,47 @@ class AdminService:
         }
 
     async def get_user_dashboard(self, owner_id: int) -> dict:
-        """Дашборд: сводка + метрики по каждому сохранённому подключению пользователя."""
+        """Дашборд: сводка + метрики по каждому сохранённому подключению пользователя.
+
+        Для каждой записи параллельно опрашиваются:
+        - метрики по сохранённой БД (имя из записи) — могут быть недоступны;
+        - каталог кластера через подключение к служебной БД postgres — список имён БД
+          в кластере на момент запроса, часто доступен даже когда целевая БД недоступна.
+        """
         summary = await self.get_system_statistics()
-        dbs = await self.db_service.get_user_databases(owner_id, 0, 50)
+        dbs = await self.db_service.get_user_databases(owner_id, 0, 200)
+
+        async def _safe_cluster_catalog(d: Database) -> dict:
+            try:
+                rows = await self.db_service.list_server_catalog_databases(
+                    d.host, d.port, d.username, d.password, "postgres"
+                )
+                return {"ok": True, "databases": rows, "error": None}
+            except Exception as e:
+                return {"ok": False, "databases": [], "error": str(e)[:500]}
+
+        async def _dashboard_row(d: Database) -> Tuple[Database, dict, dict]:
+            m, cat = await asyncio.gather(
+                self.db_service.get_live_metrics(
+                    d.host, d.port, d.username, d.password, d.database_name
+                ),
+                _safe_cluster_catalog(d),
+            )
+            return d, m, cat
+
+        triples = await asyncio.gather(*[_dashboard_row(d) for d in dbs])
         connections = []
         total_remote = 0
         reachable = 0
-        for d in dbs:
-            m = await self.db_service.get_live_metrics(
-                d.host, d.port, d.username, d.password, d.database_name
-            )
+        catalog_ok = 0
+        for d, m, cat in triples:
             if m.get("reachable"):
                 reachable += 1
                 sz = m.get("database_size_bytes")
                 if isinstance(sz, int):
                     total_remote += sz
+            if cat.get("ok"):
+                catalog_ok += 1
             connections.append(
                 {
                     "id": d.id,
@@ -503,9 +800,13 @@ class AdminService:
                     "port": d.port,
                     "database_name": d.database_name,
                     "status": d.status,
+                    "access_privileges": d.access_privileges,
                     "metrics": m,
+                    "cluster_catalog": cat,
                 }
             )
         summary["remote_databases_total_bytes"] = total_remote
         summary["remote_databases_reachable_count"] = reachable
+        summary["your_databases_count"] = len(connections)
+        summary["cluster_catalogs_ok_count"] = catalog_ok
         return {"summary": summary, "connections": connections}

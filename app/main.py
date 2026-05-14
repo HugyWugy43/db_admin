@@ -1,3 +1,9 @@
+import asyncio
+import logging
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -29,8 +35,48 @@ app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 graphql_app = GraphQLRouter(schema)
 app.include_router(graphql_app, prefix="/graphql")
 
+logger = logging.getLogger(__name__)
+
+
+def _run_alembic_upgrade() -> None:
+    """Миграции Alembic. Если таблицы уже есть из create_all, но нет alembic_version — stamp начальной ревизии."""
+    from sqlalchemy import create_engine, text
+
+    sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+    root = Path(__file__).resolve().parent.parent
+    ini_path = str(root / "alembic.ini")
+
+    eng = create_engine(sync_url)
+    try:
+        with eng.connect() as conn:
+            n_users = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'users'"
+                )
+            ).scalar() or 0
+            n_av = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'alembic_version'"
+                )
+            ).scalar() or 0
+    finally:
+        eng.dispose()
+
+    cfg = Config(ini_path)
+    if n_users > 0 and n_av == 0:
+        command.stamp(cfg, "3bce1926ff36")
+
+    try:
+        command.upgrade(cfg, "head")
+    except Exception as e:
+        raise RuntimeError(f"alembic upgrade head failed: {e}") from e
+
+
 @app.on_event("startup")
 async def ensure_admin_user():
+    await asyncio.to_thread(_run_alembic_upgrade)
     await init_db()
     async with AsyncSessionLocal() as session:
         user_service = UserService(session)

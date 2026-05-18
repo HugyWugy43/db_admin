@@ -104,7 +104,7 @@
           </div>
           <div class="stat">
             <div class="stat-value" id="stat-remote-size">—</div>
-            <div class="stat-label">Ваши БД: суммарный размер</div>
+            <div class="stat-label">Размер всех БД в кластере</div>
           </div>
         </div>
         <p class="help-text" id="dashHint"></p>
@@ -143,14 +143,20 @@
 
         <!-- DB Detail View -->
         <div id="dbDetail" class="db-detail hidden">
-          <button class="btn btn-back" onclick="backDB()">← Назад к списку</button>
-          <h2 id="dbName" class="db-title"></h2>
-          <p id="dbAccessPriv" class="db-meta-priv muted"></p>
+          <div class="db-detail-top">
+            <button type="button" class="btn btn-back" onclick="backDB()">← Назад к списку</button>
+            <div class="db-detail-intro">
+              <h2 id="dbName" class="db-title"></h2>
+              <p id="dbAccessPriv" class="db-meta-priv muted"></p>
+            </div>
+          </div>
 
           <div id="serverCatalogPanel" class="panel catalog-panel hidden">
             <h3>Базы на сервере</h3>
-            <p class="help-text">Список имён баз (<code>pg_database</code>), для которых хватает прав текущего подключения.</p>
-            <ul id="serverCatalogList" class="catalog-chips"></ul>
+            <div class="panel-body">
+              <p class="help-text catalog-help">Список имён баз (<code>pg_database</code>), для которых хватает прав текущего подключения.</p>
+              <ul id="serverCatalogList" class="catalog-chips"></ul>
+            </div>
           </div>
 
           <div class="db-explorer">

@@ -684,13 +684,22 @@ class DatabaseService:
             )
             rows = await conn.fetch(
                 """
-                SELECT d.datname AS name
+                SELECT d.datname AS name,
+                       pg_database_size(d.datname) AS size_bytes
                 FROM pg_database d
                 WHERE NOT d.datistemplate
                 ORDER BY d.datname
                 """
             )
-            return [{"name": r["name"]} for r in rows]
+            return [
+                {
+                    "name": r["name"],
+                    "database_size_bytes": int(r["size_bytes"])
+                    if r["size_bytes"] is not None
+                    else None,
+                }
+                for r in rows
+            ]
         finally:
             if conn is not None:
                 await conn.close()
@@ -784,14 +793,15 @@ class AdminService:
         total_remote = 0
         reachable = 0
         catalog_ok = 0
+        cluster_catalogs = {}
         for d, m, cat in triples:
             if m.get("reachable"):
                 reachable += 1
-                sz = m.get("database_size_bytes")
-                if isinstance(sz, int):
-                    total_remote += sz
             if cat.get("ok"):
                 catalog_ok += 1
+                catalog_key = (d.host, d.port, d.username, d.password)
+                if catalog_key not in cluster_catalogs:
+                    cluster_catalogs[catalog_key] = cat
             connections.append(
                 {
                     "id": d.id,
@@ -805,8 +815,16 @@ class AdminService:
                     "cluster_catalog": cat,
                 }
             )
+        for cat in cluster_catalogs.values():
+            for row in cat.get("databases", []):
+                sz = row.get("database_size_bytes")
+                if isinstance(sz, int):
+                    total_remote += sz
         summary["remote_databases_total_bytes"] = total_remote
         summary["remote_databases_reachable_count"] = reachable
         summary["your_databases_count"] = len(connections)
         summary["cluster_catalogs_ok_count"] = catalog_ok
+        summary["cluster_databases_total_count"] = sum(
+            len(cat.get("databases", [])) for cat in cluster_catalogs.values()
+        )
         return {"summary": summary, "connections": connections}

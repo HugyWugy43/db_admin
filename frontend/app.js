@@ -169,18 +169,21 @@ function formatClusterCatalogCell(c, savedDbName) {
     const err = cat.error || 'ошибка';
     return `<span class="muted" title="${escapeHtml(err)}">нет доступа к каталогу</span>`;
   }
-  const names = (cat.databases || []).map((x) => x.name).filter(Boolean);
-  if (!names.length) {
+  const rows = Array.isArray(cat.databases) ? cat.databases : [];
+  if (!rows.length) {
     return '<span class="muted">пусто</span>';
   }
+  const names = rows.map((x) => x.name).filter(Boolean);
   const inCluster = names.includes(savedDbName);
   const rowHint = inCluster
     ? ''
     : ' title="Сохранённая база сейчас не видна в каталоге (переименована, удалена или нет прав на pg_database)"';
-  const chips = names
-    .map((n) => {
-      const hl = n === savedDbName ? ' chip-current' : '';
-      return `<span class="chip${hl}">${escapeHtml(n)}</span>`;
+  const chips = rows
+    .map((r) => {
+      const name = String(r.name || '');
+      const hl = name === savedDbName ? ' chip-current' : '';
+      const size = typeof r.database_size_bytes === 'number' ? ` ${formatBytes(r.database_size_bytes)}` : '';
+      return `<span class="chip${hl}">${escapeHtml(name)}${escapeHtml(size)}</span>`;
     })
     .join('');
   return `<div class="cluster-cell"${rowHint}>${chips}</div>`;
@@ -228,8 +231,7 @@ async function loadStats() {
     hint.textContent =
       `Колонка «Базы в кластере» — актуальный список из PostgreSQL (pg_database), запрос идёт через служебную БД postgres и ` +
       `может отображаться, даже если к сохранённой базе сейчас не подключиться. ` +
-      `Каталог удалось прочитать: ${catOk} из ${totalConn}. ` +
-      `Размер и сессии — только для сохранённой БД при успешном подключении к ней (${reach} из ${totalConn}).`;
+      `Показан размер всех баз кластера, а размер и сессии в строке — только для сохранённой БД при успешном подключении (${reach} из ${totalConn}).`;
     tbody.innerHTML = (data.connections || [])
       .map((c) => {
         const m = c.metrics || {};
@@ -337,6 +339,7 @@ async function openDB(id) {
     state.pageNum = 0;
     document.getElementById('dbList').classList.add('hidden');
     document.getElementById('dbDetail').classList.remove('hidden');
+    document.getElementById('page-db')?.classList.add('db-detail-view');
     document.getElementById('dbName').textContent = state.currentDB.name;
     const ap = document.getElementById('dbAccessPriv');
     if (ap) {
@@ -364,8 +367,12 @@ async function loadServerCatalogPanel() {
       return;
     }
     const names = await r.json();
+    const currentName = state.currentDB?.name;
     ul.innerHTML = names.length
-      ? names.map((x) => `<li><span class="chip">${escapeHtml(x.name)}</span></li>`).join('')
+      ? names.map((x) => {
+          const cur = x.name === currentName;
+          return `<li><span class="chip${cur ? ' chip-current' : ''}">${escapeHtml(x.name)}</span></li>`;
+        }).join('')
       : '<li class="muted">Нет доступных имён или нет прав на служебную БД</li>';
   } catch (e) {
     ul.innerHTML = '<li class="muted">Ошибка сети</li>';
@@ -375,6 +382,7 @@ async function loadServerCatalogPanel() {
 function backDB() {
   document.getElementById('dbList').classList.remove('hidden');
   document.getElementById('dbDetail').classList.add('hidden');
+  document.getElementById('page-db')?.classList.remove('db-detail-view');
   state.currentDB = null;
   state.currentTable = null;
   loadDBList();

@@ -342,10 +342,20 @@ body {
 }
 
 .btn-add-db {
-  padding: 6px 12px;
+  width: auto;
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
   border-radius: 8px;
+  white-space: nowrap;
+}
+
+.page-header .btn-primary {
+  width: auto;
+}
+
+#page-db.db-detail-view .page-header .btn-add-db {
+  display: none;
 }
 
 .privileges-fieldset {
@@ -382,8 +392,9 @@ body {
 }
 
 .db-meta-priv {
-  margin: -8px 0 16px;
+  margin: 0;
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .cluster-names-cell {
@@ -566,20 +577,36 @@ body {
 
 /* DB EXPLORER */
 .db-detail {
-  padding: 20px;
+  max-width: 1200px;
+}
+
+.db-detail-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.db-detail-intro {
+  flex: 1;
+  min-width: 200px;
 }
 
 .db-title {
-  margin-bottom: 20px;
-  font-size: 22px;
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 700;
   color: #2c3e50;
+  line-height: 1.25;
 }
 
 .db-explorer {
   display: grid;
-  grid-template-columns: 200px 200px 1fr;
-  gap: 20px;
-  height: calc(100vh - 180px);
+  grid-template-columns: repeat(2, minmax(260px, 360px));
+  gap: 16px;
+  justify-content: start;
+  align-items: start;
 }
 
 .panel {
@@ -592,23 +619,38 @@ body {
 }
 
 .panel h3 {
-  padding: 15px;
+  padding: 12px 16px;
   border-bottom: 1px solid #eee;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5c6b7a;
   background: #f8f9fa;
+}
+
+.panel-body {
+  padding: 16px 18px;
+}
+
+.schemas-panel,
+.tables-panel {
+  min-height: 280px;
+  max-height: min(420px, calc(100vh - 320px));
 }
 
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 5px;
+  padding: 8px;
+  min-height: 120px;
 }
 
 .list-item {
   display: block;
-  width: calc(100% - 10px);
-  padding: 10px 8px;
-  margin: 2px 5px;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 2px 0;
   background: none;
   border: none;
   text-align: left;
@@ -638,10 +680,18 @@ body {
 /* TABLE PANEL */
 .table-panel {
   grid-column: 1 / -1;
+  min-height: 320px;
+  max-height: none;
 }
 
 .table-panel h3 {
-  margin-bottom: 10px;
+  margin-bottom: 0;
+}
+
+.table-panel .pagination-controls,
+.table-panel .schema-info,
+.table-panel .table-container {
+  margin: 0 16px 16px;
 }
 
 .pagination-controls {
@@ -649,6 +699,7 @@ body {
   gap: 10px;
   align-items: center;
   margin-bottom: 15px;
+  padding-top: 14px;
 }
 
 .schema-info {
@@ -832,21 +883,39 @@ body {
   font-size: 13px;
 }
 
+.catalog-panel {
+  margin-bottom: 20px;
+}
+
+.catalog-panel .catalog-help {
+  margin: 0 0 14px;
+}
+
 .catalog-panel ul.catalog-chips {
   list-style: none;
-  margin: 10px 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
 }
 
 .catalog-panel .chip {
   display: inline-block;
-  padding: 4px 10px;
+  padding: 6px 14px;
   background: #f1f3f5;
-  border-radius: 6px;
+  border: 1px solid #e2e6ea;
+  border-radius: 8px;
   font-size: 13px;
+  line-height: 1.35;
+  color: #2c3e50;
+}
+
+.catalog-panel .chip.chip-current {
+  background: #e7ecff;
+  border-color: #667eea;
+  color: #4455b8;
+  font-weight: 600;
 }
 
 .inline-check {
@@ -857,11 +926,13 @@ body {
 @media (max-width: 1024px) {
   .db-explorer {
     grid-template-columns: 1fr;
+    max-width: none;
   }
-  
+
   .schemas-panel,
   .tables-panel {
-    max-height: 200px;
+    max-height: 240px;
+    min-height: 0;
   }
 }
 
